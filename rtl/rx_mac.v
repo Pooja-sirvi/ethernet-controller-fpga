@@ -60,6 +60,7 @@ module rx_mac (
     reg [1:0] dib_cnt;
     reg [31:0] crc_reg;
     reg       err_flag, overflow;
+    reg       low_seen;      // CRS_DV was low last clock (a real PHY may toggle CRS_DV at frame end)
 
     reg [8:0] payload_bytes;
     reg [6:0] widx;
@@ -106,6 +107,7 @@ module rx_mac (
             crc_reg <= 32'hFFFFFFFF;
             err_flag <= 1'b0;
             overflow <= 1'b0;
+            low_seen <= 1'b0;
             payload_bytes <= 9'd0;
             widx <= 7'd0;
         end
@@ -123,6 +125,7 @@ module rx_mac (
                 crc_reg  <= 32'hFFFFFFFF;
                 err_flag <= 1'b0;
                 overflow <= 1'b0;
+                low_seen <= 1'b0;
                 // frame starts: carrier valid and first preamble dibit (01)
                 if (crs_q && rxd_q == 2'b01) begin
                     busy  <= 1'b1;
@@ -144,6 +147,7 @@ module rx_mac (
 
             S_DATA: begin
                 if (crs_q) begin
+                    low_seen <= 1'b0;
                     if (er_q) err_flag <= 1'b1;
                     sh      <= {rxd_q, sh[7:2]};
                     dib_cnt <= dib_cnt + 1'b1;
@@ -156,8 +160,13 @@ module rx_mac (
                         crc_reg <= crc32_byte(crc_reg, full_byte);
                     end
                 end
+                else if (!low_seen) begin
+                    // one low clock: a real RMII PHY toggles CRS_DV at the end of a frame
+                    // while it still delivers the last dibits, so wait one more clock
+                    low_seen <= 1'b1;
+                end
                 else begin
-                    state <= S_CHECK;                // carrier dropped = end of frame
+                    state <= S_CHECK;                // two lows in a row = end of frame
                 end
             end
 
